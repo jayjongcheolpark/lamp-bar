@@ -21,6 +21,8 @@ struct LampBarApp: App {
                 .environmentObject(store)
         }
         .windowResizability(.contentSize)
+        // Opened from the panel only, never at launch.
+        .defaultLaunchBehavior(.suppressed)
 
         // `--window`: the panel in a normal window, for screenshots and testing.
         Window("Lamp Bar", id: "panel") {
