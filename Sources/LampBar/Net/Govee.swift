@@ -94,18 +94,6 @@ actor GoveeClient {
         try fire(Self.message("turn", ["value": on ? 1 : 0]), device)
     }
 
-    func setBrightness(_ percent: Int, _ device: GoveeDevice) throws {
-        try fire(Self.message("brightness", ["value": min(max(percent, 1), 100)]), device)
-    }
-
-    func setColor(_ color: RGB, _ device: GoveeDevice) throws {
-        try fire(Self.message("colorwc", ["color": ["r": color.r, "g": color.g, "b": color.b], "colorTemInKelvin": 0]), device)
-    }
-
-    func setKelvin(_ kelvin: Int, _ device: GoveeDevice) throws {
-        try fire(Self.message("colorwc", ["color": ["r": 0, "g": 0, "b": 0], "colorTemInKelvin": kelvin]), device)
-    }
-
     private func fire(_ message: Data, _ device: GoveeDevice) throws {
         let fd = try Sockets.udp()
         defer { close(fd) }

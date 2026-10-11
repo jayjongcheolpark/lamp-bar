@@ -32,7 +32,6 @@ struct LampStageView: NSViewRepresentable {
     final class Coordinator {
         let stage = LampStage()
         private var shown: [LampID: (CGFloat, NSColor)] = [:]
-        private var selected: LampID?
 
         @MainActor
         func apply(_ store: LampStore, animated: Bool) {
@@ -47,10 +46,6 @@ struct LampStageView: NSViewRepresentable {
                 if let previous = shown[lamp.id], previous.0 == level, previous.1 == color { continue }
                 shown[lamp.id] = (level, color)
                 stage.show(lamp.id, level: level, color: color, animated: animated)
-            }
-            if selected != store.selected {
-                selected = store.selected
-                stage.select(store.selected, animated: animated)
             }
         }
     }

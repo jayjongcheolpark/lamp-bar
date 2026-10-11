@@ -12,9 +12,6 @@ struct KasaOutlet: Identifiable, Hashable, Codable, Sendable {
     var deviceAlias: String
     var model: String
     var isOn: Bool
-    /// Where the plug is, as set in the Kasa app; used for the sunset time.
-    var latitude: Double?
-    var longitude: Double?
     /// True for plugs that need a TP-Link login; the app controls them through `KasaHelper`.
     var viaHelper = false
 
@@ -50,7 +47,6 @@ enum KasaXOR {
         else { return [] }
         let alias = info["alias"] as? String ?? "Kasa plug"
         let model = info["model"] as? String ?? ""
-        let (latitude, longitude) = location(info)
         if let children = info["children"] as? [[String: Any]], !children.isEmpty {
             return children.compactMap { child in
                 guard let rawID = child["id"] as? String else { return nil }
@@ -60,28 +56,14 @@ enum KasaXOR {
                     deviceID: deviceID, childID: childID, host: host,
                     alias: child["alias"] as? String ?? "Socket \(childID)",
                     deviceAlias: alias, model: model,
-                    isOn: (child["state"] as? Int ?? 0) == 1,
-                    latitude: latitude, longitude: longitude
+                    isOn: (child["state"] as? Int ?? 0) == 1
                 )
             }
         }
         return [KasaOutlet(
             deviceID: deviceID, childID: nil, host: host, alias: alias, deviceAlias: alias, model: model,
-            isOn: (info["relay_state"] as? Int ?? 0) == 1,
-            latitude: latitude, longitude: longitude
+            isOn: (info["relay_state"] as? Int ?? 0) == 1
         )]
-    }
-
-    /// Plugs report their location as `latitude_i`/`longitude_i` (degrees x 10 000) or, on older firmware, as degrees.
-    /// A plug that was never given a location reports an out-of-range value.
-    static func location(_ info: [String: Any]) -> (Double?, Double?) {
-        func degrees(_ key: String) -> Double? {
-            if let scaled = info["\(key)_i"] as? Int { return Double(scaled) / 10_000 }
-            return info[key] as? Double
-        }
-        guard let lat = degrees("latitude"), let lon = degrees("longitude"),
-              abs(lat) <= 90, abs(lon) <= 180, !(lat == 0 && lon == 0) else { return (nil, nil) }
-        return (lat, lon)
     }
 
     static func setRelayCommand(on: Bool, deviceID: String, childID: String?) -> String {
@@ -145,14 +127,6 @@ struct KasaClient: Sendable {
     func setPower(_ on: Bool, outlet: KasaOutlet) throws {
         let reply = try request(KasaXOR.setRelayCommand(on: on, deviceID: outlet.deviceID, childID: outlet.childID), host: outlet.host)
         guard reply.contains(#""err_code":0"#) else { throw KasaError.badReply(reply) }
-    }
-
-    /// Reads the state of one device directly over TCP.
-    func outlets(host: String) throws -> [KasaOutlet] {
-        let reply = try request(KasaXOR.sysinfoQuery, host: host)
-        let outlets = KasaXOR.outlets(fromSysinfo: reply, host: host)
-        guard !outlets.isEmpty else { throw KasaError.badReply(reply) }
-        return outlets
     }
 }
 

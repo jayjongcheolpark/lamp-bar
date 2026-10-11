@@ -12,11 +12,11 @@ final class LampStage {
 
     /// Camera orbit, in radians; dragging turns it within these limits.
     var azimuth: CGFloat = 0.03
-    var elevation: CGFloat = 0.58
+    var elevation: CGFloat = 0.5
     static let azimuthRange: ClosedRange<CGFloat> = -0.9...0.9
     static let elevationRange: ClosedRange<CGFloat> = 0.25...1.25
-    private static let target = SCNVector3(0, 0.28, 0.05)
-    private static let distance: CGFloat = 4.6
+    private static let target = SCNVector3(0, 0.55, 0.05)
+    private static let distance: CGFloat = 5.0
 
     static let background = NSColor(hex: 0x050506)
     static let warm = NSColor(hex: 0xFFC27A)
@@ -24,17 +24,16 @@ final class LampStage {
     /// Lamps are modeled at real size, then shown larger so they read on a small stage.
     private static let modelScale: CGFloat = 1.45
     /// Converts the prototype's three.js light intensity to SceneKit lumens.
-    private static let lumens: CGFloat = 16
+    private static let lumens: CGFloat = 12
     /// Glass and fabric go dull grey when off, and take their own color when on.
     private static let offColor = NSColor(hex: 0x3B3A38)
 
-    /// The parts of one lamp that change when it switches or is selected.
+    /// The parts of one lamp that change when it switches.
     struct Rig {
         let glowing: [SCNMaterial]
         let light: SCNLight
         let halo: SCNNode
         let pool: SCNNode
-        let ring: SCNNode
         /// Middle of the lamp, for picking it when a click misses its thin parts.
         let pickPoint: SCNVector3
     }
@@ -44,6 +43,8 @@ final class LampStage {
         scene.lightingEnvironment.intensity = 0
 
         let camera = SCNCamera()
+        // three.js measures the field of view vertically; say so, or SceneKit may use the wider axis.
+        camera.projectionDirection = .vertical
         camera.fieldOfView = 30
         camera.zNear = 0.1
         camera.zFar = 50
@@ -137,13 +138,6 @@ final class LampStage {
 
     private static func fillIntensity(total: CGFloat) -> CGFloat { (0.12 + 0.05 * total) * 460 }
 
-    func select(_ id: LampID, animated: Bool) {
-        SCNTransaction.begin()
-        SCNTransaction.animationDuration = animated ? 0.3 : 0
-        for (lampID, rig) in lamps { rig.ring.opacity = lampID == id ? 0.75 : 0 }
-        SCNTransaction.commit()
-    }
-
     /// The lamp that owns a node hit by a click, if any.
     static func lampID(of node: SCNNode) -> LampID? {
         var current: SCNNode? = node
@@ -213,23 +207,28 @@ final class LampStage {
             add(SCNCone(topRadius: 0.06, bottomRadius: 0.07, height: 0.15), glass, 0, 0.075, 0, in: group)
             bulb = SCNVector3(0, 0.15, 0)
         case .l4:
-            // Task floor lamp: a black stand with an arm and head that lean out toward the room (photo 4).
-            add(SCNCone(topRadius: 0.13, bottomRadius: 0.14, height: 0.025), graphite, 0, 0.012, 0, in: group)
-            add(SCNCylinder(radius: 0.01, height: 0.82), graphite, 0, 0.42, 0, in: group)
-            let arm = SCNNode()
-            arm.position = SCNVector3(0, 0.82, 0)
-            arm.eulerAngles.y = towardCenter + 0.4 + .pi
-            group.addChildNode(arm)
-            add(SCNCylinder(radius: 0.008, height: 0.5), graphite, 0, 0.18, 0.17, in: arm).eulerAngles.x = 0.82
+            // Task floor lamp (photo 4): heavy round foot, straight pole, then a zig-zag of two arms,
+            // first back and up, then forward and up, ending in a black cone shade aimed down at the balcony window (west, -x).
+            let metal = material(NSColor(hex: 0x1C1D20), roughness: 0.32, metalness: 0.55)
+            let joint = material(NSColor(hex: 0x5B5E63), roughness: 0.3, metalness: 0.8)
+            add(SCNCone(topRadius: 0.15, bottomRadius: 0.16, height: 0.035), metal, 0, 0.018, 0, in: group)
+            let p0 = SIMD3<Float>(0, 0.03, 0), j1 = SIMD3<Float>(0, 0.72, 0), j2 = SIMD3<Float>(0.26, 1.08, 0), j3 = SIMD3<Float>(-0.12, 1.3, 0)
+            segment(from: p0, to: j1, radius: 0.011, metal, in: group)
+            segment(from: j1, to: j2, radius: 0.009, metal, in: group)
+            segment(from: j2, to: j3, radius: 0.009, metal, in: group)
+            add(SCNSphere(radius: 0.02), joint, CGFloat(j1.x), CGFloat(j1.y), CGFloat(j1.z), in: group)
+            add(SCNSphere(radius: 0.018), joint, CGFloat(j2.x), CGFloat(j2.y), CGFloat(j2.z), in: group)
             let head = SCNNode()
-            head.position = SCNVector3(0, 0.36, 0.34)
-            head.eulerAngles.x = 0.9
-            arm.addChildNode(head)
-            let shade = material(NSColor(hex: 0x1C1D20), roughness: 0.4, metalness: 0.4)
+            head.simdPosition = j3
+            // The shade opens forward and down toward the window.
+            head.eulerAngles.z = 2.2
+            group.addChildNode(head)
+            let shade = material(NSColor(hex: 0x1C1D20), roughness: 0.4, metalness: 0.35)
             shade.isDoubleSided = true
-            add(Self.tube(top: 0.03, bottom: 0.085, height: 0.15), shade, 0, 0, 0, in: head)
-            let bulbNode = add(SCNSphere(radius: 0.03), glass, 0, -0.04, 0, in: head)
-            bulb = group.convertPosition(bulbNode.convertPosition(SCNVector3Zero, to: nil), from: nil)
+            add(Self.tube(top: 0.095, bottom: 0.035, height: 0.17), shade, 0, 0.085, 0, in: head)
+            add(SCNCylinder(radius: 0.035, height: 0.05), metal, 0, -0.01, 0, in: head)
+            add(SCNSphere(radius: 0.032), glass, 0, 0.12, 0, in: head)
+            bulb = SCNVector3(-0.22, 1.22, 0)
         case .l5:
             // Brass table lamp with a fabric shade.
             let brass = material(NSColor(hex: 0xB69250), roughness: 0.28, metalness: 0.85)
@@ -276,7 +275,7 @@ final class LampStage {
         halo.categoryBitMask = 2
         group.addChildNode(halo)
 
-        // A pool of light on the plate under the lamp; the task lamp throws it forward, where its head points.
+        // A pool of light on the plate under the lamp; the task lamp throws it west, where its shade points.
         let poolMaterial = SCNMaterial()
         poolMaterial.lightingModel = .constant
         poolMaterial.diffuse.contents = Self.poolImage
@@ -287,28 +286,15 @@ final class LampStage {
         let pool = SCNNode(geometry: SCNPlane(width: poolSize, height: poolSize))
         pool.geometry?.materials = [poolMaterial]
         pool.eulerAngles.x = -.pi / 2
-        pool.position = SCNVector3(lamp.x + (lamp.id == .l4 ? -0.15 : 0), 0.024, lamp.z + (lamp.id == .l4 ? 0.45 : 0))
+        pool.position = SCNVector3(lamp.x + (lamp.id == .l4 ? -0.6 : 0), 0.024, lamp.z)
         pool.opacity = 0
         pool.castsShadow = false
         pool.categoryBitMask = 2
         scene.rootNode.addChildNode(pool)
 
-        // Selection ring on the plate around the lamp's foot.
-        let ringMaterial = SCNMaterial()
-        ringMaterial.lightingModel = .constant
-        ringMaterial.diffuse.contents = NSColor(hex: 0xF3EFE8)
-        ringMaterial.isDoubleSided = true
-        let ring = SCNNode(geometry: Self.flatRing(inner: 0.2, outer: 0.225))
-        ring.geometry?.materials = [ringMaterial]
-        ring.position = SCNVector3(lamp.x, 0.025, lamp.z)
-        ring.opacity = 0
-        ring.castsShadow = false
-        ring.categoryBitMask = 2
-        scene.rootNode.addChildNode(ring)
-
         let worldBulbY = (bulb.y + 0.12) * Self.modelScale
         return Rig(
-            glowing: glowing, light: light, halo: halo, pool: pool, ring: ring,
+            glowing: glowing, light: light, halo: halo, pool: pool,
             pickPoint: SCNVector3(lamp.x, worldBulbY * 0.6, lamp.z)
         )
     }
@@ -322,6 +308,13 @@ final class LampStage {
         node.position = SCNVector3(x, y, z)
         parent.addChildNode(node)
         return node
+    }
+
+    /// A rod between two points.
+    private func segment(from a: SIMD3<Float>, to b: SIMD3<Float>, radius: CGFloat, _ material: SCNMaterial, in parent: SCNNode) {
+        let node = add(SCNCylinder(radius: radius, height: CGFloat(simd_distance(a, b))), material, 0, 0, 0, in: parent)
+        node.simdPosition = (a + b) / 2
+        node.simdOrientation = simd_quatf(from: SIMD3<Float>(0, 1, 0), to: simd_normalize(b - a))
     }
 
     private func material(_ color: NSColor, roughness: CGFloat, metalness: CGFloat = 0) -> SCNMaterial {
@@ -344,24 +337,6 @@ final class LampStage {
     /// An open tube or lampshade, centered on its height.
     static func tube(top: CGFloat, bottom: CGFloat, height: CGFloat) -> SCNGeometry {
         lathe([(top, height / 2), (bottom, -height / 2)])
-    }
-
-    /// A flat ring in the xz plane.
-    static func flatRing(inner: CGFloat, outer: CGFloat, segments: Int = 64) -> SCNGeometry {
-        var vertices: [SCNVector3] = []
-        var indices: [Int32] = []
-        for s in 0...segments {
-            let a = CGFloat(s) / CGFloat(segments) * 2 * .pi
-            vertices.append(SCNVector3(inner * cos(a), 0, inner * sin(a)))
-            vertices.append(SCNVector3(outer * cos(a), 0, outer * sin(a)))
-        }
-        for s in 0..<segments {
-            let i = Int32(s * 2)
-            indices += [i, i + 1, i + 2, i + 1, i + 3, i + 2]
-        }
-        let normals = Array(repeating: SCNVector3(0, 1, 0), count: vertices.count)
-        return SCNGeometry(sources: [SCNGeometrySource(vertices: vertices), SCNGeometrySource(normals: normals)],
-                           elements: [SCNGeometryElement(indices: indices, primitiveType: .triangles)])
     }
 
     /// A surface of revolution around the y axis from (radius, height) points, open at both ends.

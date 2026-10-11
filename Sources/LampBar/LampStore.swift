@@ -31,35 +31,26 @@ final class LampStore: ObservableObject {
     @Published private(set) var lastSync: Date?
     @Published private(set) var hasLogin = Keychain.hasCredentials
     @Published private(set) var helperProblem: String?
-    /// The lamp shown in the readout; clicking a lamp or a chip selects it.
-    @Published var selected: LampID = .l1
-    /// The scene last applied from the Scene tile; a manual change clears it.
-    @Published private(set) var activeScene: LightScene?
-    @Published private(set) var sleep = SleepTimer.off
-    @Published private(set) var sleepDeadline: Date?
-    @Published private(set) var sunsetEnabled: Bool
     @Published var isPanelOpen = false {
         didSet { if isPanelOpen && !oldValue { refreshSoon() } }
     }
 
     private let kasa = KasaClient()
     private let goveeClient = GoveeClient()
-    private let defaults = UserDefaults.standard
+    /// One settings domain for the app bundle and the command line, so both see the same plug mapping.
+    static let settings = UserDefaults(suiteName: "dev.lampbar.settings")!
+    private let defaults = LampStore.settings
     private var pollTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
-    private var goveeTask: Task<Void, Never>?
     /// Commands bump this, so a poll that started before a command cannot overwrite its result.
     private var generation = 0
-    private var sleepTask: Task<Void, Never>?
-    private var sunsetTask: Task<Void, Never>?
 
     init() {
-        let stored = UserDefaults.standard.dictionary(forKey: "plugMapping") as? [String: String] ?? [:]
+        let stored = Self.settings.dictionary(forKey: "plugMapping") as? [String: String] ?? [:]
         mapping = Dictionary(uniqueKeysWithValues: stored.compactMap { key, value in LampID(rawValue: key).map { ($0, value) } })
         if let data = defaults.data(forKey: "goveeDevice") {
             goveeDevice = try? JSONDecoder().decode(GoveeDevice.self, from: data)
         }
-        sunsetEnabled = UserDefaults.standard.bool(forKey: "sunsetEnabled")
         startPolling()
     }
 
@@ -114,11 +105,9 @@ final class LampStore: ObservableObject {
         let (found, (device, status)) = await (kasaResult, goveeResult)
         // A command started after this poll began; its own refresh brings the newer state.
         guard startGeneration == generation else { return }
-        let hadLocation = location != nil
         apply(outlets: found)
         apply(goveeDevice: device, status: status)
         lastSync = Date()
-        if !hadLocation && location != nil { scheduleSunset() }
     }
 
     private func discoverKasa() async -> [KasaOutlet] {
@@ -186,7 +175,6 @@ final class LampStore: ObservableObject {
     // MARK: Commands
 
     func toggle(_ id: LampID) {
-        selected = id
         setLamps([id], on: !state(id).isOn)
     }
 
@@ -195,26 +183,7 @@ final class LampStore: ObservableObject {
         setLamps(Set(LampID.allCases), on: !anyOn)
     }
 
-    /// The Scene tile: each click applies the next scene.
-    func cycleScene() {
-        let all = LightScene.allCases
-        let next = activeScene.flatMap { all.firstIndex(of: $0) }.map { all[(all.index(after: $0)) % all.count] } ?? all[0]
-        apply(next)
-    }
-
-    func apply(_ scene: LightScene) {
-        let on = scene.lampsOn
-        activeScene = scene
-        Task {
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask { await self.send(Set(LampID.allCases).subtracting(on), on: false) }
-                group.addTask { await self.send(on, on: true) }
-            }
-        }
-    }
-
     func setLamps(_ ids: Set<LampID>, on: Bool) {
-        activeScene = nil
         Task { await send(ids, on: on) }
     }
 
@@ -263,118 +232,6 @@ final class LampStore: ObservableObject {
             return nil
         } catch {
             return "\(error)"
-        }
-    }
-
-    // MARK: Govee brightness and color
-
-    func setGoveeBrightness(_ percent: Int) {
-        guard let device = goveeDevice else { return }
-        govee?.brightness = percent
-        sendGovee(turnOn: !state(.l2).isOn) { try await $0.setBrightness(percent, device) }
-    }
-
-    func setGoveeColor(_ swatch: GoveeSwatch) {
-        guard let device = goveeDevice else { return }
-        govee?.color = swatch.rgb
-        govee?.kelvin = swatch.kelvin ?? 0
-        sendGovee(turnOn: !state(.l2).isOn) { client in
-            if let kelvin = swatch.kelvin {
-                try await client.setKelvin(kelvin, device)
-            } else {
-                try await client.setColor(swatch.rgb, device)
-            }
-        }
-    }
-
-    /// The Light bar color tile: each click sets the next color.
-    func cycleGoveeColor() {
-        let all = GoveeSwatch.all
-        let current = govee.flatMap { status in all.firstIndex { $0.matches(status) } }
-        setGoveeColor(all[current.map { ($0 + 1) % all.count } ?? 0])
-    }
-
-    var goveeSwatch: GoveeSwatch? {
-        govee.flatMap { status in GoveeSwatch.all.first { $0.matches(status) } }
-    }
-
-    /// Changing brightness or color of a lamp that is off also switches it on, as in the prototype.
-    private func sendGovee(turnOn: Bool, _ command: @escaping (GoveeClient) async throws -> Void) {
-        guard let device = goveeDevice else { return }
-        generation += 1
-        activeScene = nil
-        if turnOn { lamps[.l2]?.isOn = true }
-        goveeTask?.cancel()
-        let client = goveeClient
-        goveeTask = Task {
-            // Wait for the slider to settle before sending.
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            guard !Task.isCancelled else { return }
-            busy += 1
-            defer { busy -= 1 }
-            if turnOn { try? await client.setPower(true, device) }
-            try? await command(client)
-            refreshSoon(after: 0.8)
-        }
-    }
-
-    // MARK: Sleep timer and sunset
-
-    /// The Sleep tile: each click picks the next duration; when it runs out, all five lamps switch off.
-    func cycleSleep() {
-        let all = SleepTimer.allCases
-        sleep = all[(all.firstIndex(of: sleep)! + 1) % all.count]
-        sleepTask?.cancel()
-        guard let minutes = sleep.minutes else {
-            sleepDeadline = nil
-            return
-        }
-        let deadline = Date().addingTimeInterval(TimeInterval(minutes * 60))
-        sleepDeadline = deadline
-        sleepTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(max(deadline.timeIntervalSinceNow, 0) * 1_000_000_000))
-            guard !Task.isCancelled, let self else { return }
-            sleep = .off
-            sleepDeadline = nil
-            apply(.allOff)
-        }
-    }
-
-    /// Where the office is, from the location a Kasa plug reports (the Kasa app sets it). No location permission needed.
-    var location: (latitude: Double, longitude: Double)? {
-        outlets.lazy.compactMap { o in o.latitude.flatMap { lat in o.longitude.map { (lat, $0) } } }.first
-    }
-
-    /// Today's sunset, or tomorrow's once today's has passed.
-    var nextSunset: Date? {
-        guard let location else { return nil }
-        let now = Date()
-        for dayOffset in 0...1 {
-            let day = Calendar.current.date(byAdding: .day, value: dayOffset, to: now)!
-            if let sunset = Sun.sunset(on: day, latitude: location.latitude, longitude: location.longitude), sunset > now {
-                return sunset
-            }
-        }
-        return nil
-    }
-
-    /// The At sunset tile: when on, the Evening scene starts at sunset every day while the app runs.
-    func toggleSunset() {
-        sunsetEnabled.toggle()
-        defaults.set(sunsetEnabled, forKey: "sunsetEnabled")
-        scheduleSunset()
-    }
-
-    private func scheduleSunset() {
-        sunsetTask?.cancel()
-        guard sunsetEnabled, let sunset = nextSunset else { return }
-        sunsetTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(max(sunset.timeIntervalSinceNow, 0) * 1_000_000_000))
-            guard !Task.isCancelled, let self else { return }
-            apply(.evening)
-            // Wait past this sunset before planning the next one.
-            try? await Task.sleep(nanoseconds: 120_000_000_000)
-            scheduleSunset()
         }
     }
 
@@ -430,50 +287,5 @@ final class LampStore: ObservableObject {
         goveeDevice = nil
         defaults.removeObject(forKey: "goveeDevice")
         refreshSoon()
-    }
-}
-
-enum SleepTimer: CaseIterable {
-    case off, halfHour, hour, twoHours
-
-    var minutes: Int? {
-        switch self {
-        case .off: return nil
-        case .halfHour: return 30
-        case .hour: return 60
-        case .twoHours: return 120
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .off: return "Off"
-        case .halfHour: return "30 min"
-        case .hour: return "1 h"
-        case .twoHours: return "2 h"
-        }
-    }
-}
-
-/// The light bar colors offered in the panel, as in the prototype.
-struct GoveeSwatch: Identifiable, Hashable {
-    let name: String
-    let rgb: RGB
-    /// White swatches use the bar's white LEDs instead of mixing RGB.
-    let kelvin: Int?
-
-    var id: String { name }
-
-    static let all: [GoveeSwatch] = [
-        GoveeSwatch(name: "Warm", rgb: RGB(r: 255, g: 184, b: 102), kelvin: 2700),
-        GoveeSwatch(name: "Daylight", rgb: RGB(r: 242, g: 245, b: 255), kelvin: 6500),
-        GoveeSwatch(name: "Amber", rgb: RGB(r: 255, g: 122, b: 69), kelvin: nil),
-        GoveeSwatch(name: "Violet", rgb: RGB(r: 143, g: 123, b: 255), kelvin: nil),
-        GoveeSwatch(name: "Teal", rgb: RGB(r: 63, g: 208, b: 201), kelvin: nil),
-    ]
-
-    func matches(_ status: GoveeStatus) -> Bool {
-        if let kelvin { return abs(status.kelvin - kelvin) < 300 }
-        return status.kelvin == 0 && status.color == rgb
     }
 }

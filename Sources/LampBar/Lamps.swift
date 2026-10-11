@@ -28,7 +28,7 @@ struct Lamp: Identifiable {
 
     static let all: [Lamp] = [
         Lamp(id: .l1, number: 1, name: "Donut lamp", source: "Kasa plug · desk shelf", x: 1.0, z: -0.7, tone: .warm),
-        Lamp(id: .l2, number: 2, name: "Light bar", source: "Govee · dims and changes color", x: 1.2, z: 0.45, tone: .govee),
+        Lamp(id: .l2, number: 2, name: "Light bar", source: "Govee light bar", x: 1.2, z: 0.45, tone: .govee),
         Lamp(id: .l3, number: 3, name: "Mushroom lamp", source: "Kasa plug · shelf", x: 0.15, z: 0.75, tone: .warm),
         Lamp(id: .l4, number: 4, name: "Task floor lamp", source: "Kasa plug · work corner", x: -0.6, z: 0.7, tone: .cool),
         Lamp(id: .l5, number: 5, name: "Brass table lamp", source: "Kasa plug · balcony door", x: -1.3, z: -0.65, tone: .warm),
@@ -37,27 +37,4 @@ struct Lamp: Identifiable {
     static let kasa = all.filter { !$0.isGovee }
 
     static func with(_ id: LampID) -> Lamp { all.first { $0.id == id }! }
-}
-
-enum LightScene: CaseIterable, Identifiable {
-    case evening, focus, night, allOff
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .evening: return "Evening"
-        case .focus: return "Focus"
-        case .night: return "Night"
-        case .allOff: return "All off"
-        }
-    }
-
-    var lampsOn: Set<LampID> {
-        switch self {
-        case .evening: return Set(LampID.allCases)
-        case .focus: return [.l1, .l4]
-        case .night: return [.l2]
-        case .allOff: return []
-        }
-    }
 }
