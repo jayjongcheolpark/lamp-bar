@@ -9,9 +9,9 @@ struct PanelView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            // The stage runs a little past the card's padding, with the prototype's 16:9.5 shape.
+            // The stage runs a little past the card's padding, 4:3, tall enough for the tallest lamps at every angle.
             LampStageView()
-                .frame(width: 512, height: 304)
+                .frame(width: 512, height: 384)
                 .padding(.horizontal, -6)
                 .padding(.top, 6)
             HStack(spacing: 8) {

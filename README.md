@@ -21,7 +21,7 @@ Lamp Bar talks to the plugs and the light bar on the local network only. It uses
    ./scripts/build-app.sh
    ```
 
-   The script makes a release build and writes `dist/LampBar.app`, signed ad hoc.
+   The script makes a release build, draws the app icon (`scripts/make-icon.swift`) into `AppIcon.icns`, and writes `dist/LampBar.app`, signed ad hoc.
 2. Start the app:
 
    ```sh
@@ -38,7 +38,7 @@ For development, `swift run LampBar` starts the menu bar app from the source tre
 ## The panel
 
 - **Header:** the number of lamps that are on, and the power button. The power button switches all five lamps off when any lamp is on. Otherwise it switches all five on.
-- **3D stage:** click a lamp to switch it. Drag to turn the view.
+- **3D stage:** click a lamp to switch it. Drag left or right to turn the room (up to 50 degrees each way), and drag up or down to look from higher or lower (18 to 60 degrees above the plate). Double-click empty space to return to the default view. The camera always keeps all five lamps in the frame.
 - **Lamp buttons:** one button for each lamp, with its drawing, its name and ON or OFF. Click a button to switch the lamp.
 - **Status line:** shows `Syncing…` while a command or a poll runs, `In sync` when every lamp answered, and the number of lamps that do not answer. The gear menu opens **Setup**, refreshes the state now, or quits the app.
 
@@ -105,10 +105,11 @@ The app binary also has a few Terminal commands, for checks without the panel:
 | `LampBar --switch <1-5 or all> <on or off>` | Switches lamps. |
 | `LampBar --window` | Shows the panel in a normal window instead of the menu bar. |
 | `LampBar --snapshot <file.png>` | Shows the panel, saves a picture of it after the first poll, and quits. |
+| `LampBar --snapshot <file.png> --drag <dx,dy> [--reset]` | Drags on the 3D stage with real mouse events first (points, y down), and with `--reset` double-clicks empty space after it. |
 
 ## Source layout
 
 - `Sources/LampBar/Net/` — the Kasa client (`Kasa.swift`), the Govee LAN client (`Govee.swift`), the login helper bridge (`KasaHelper.swift`) and the socket helpers.
 - `Sources/LampBar/LampStore.swift` — the lamp state, the plug mapping, polling and commands.
 - `Sources/LampBar/Views/` — the panel (`PanelView.swift`), the 3D stage (`LampStage.swift`, SceneKit), the lamp drawings (`LampArt.swift`) and **Setup**.
-- `scripts/` — the app bundle build, and the optional python-kasa helper.
+- `scripts/` — the app bundle build, the app icon drawing, and the optional python-kasa helper.

@@ -10,13 +10,19 @@ final class LampStage {
     private var levels: [LampID: CGFloat] = [:]
     private let fill = SCNLight()
 
-    /// Camera orbit, in radians; dragging turns it within these limits.
-    var azimuth: CGFloat = 0.03
-    var elevation: CGFloat = 0.5
-    static let azimuthRange: ClosedRange<CGFloat> = -0.9...0.9
-    static let elevationRange: ClosedRange<CGFloat> = 0.25...1.25
-    private static let target = SCNVector3(0, 0.55, 0.05)
-    private static let distance: CGFloat = 5.0
+    /// The camera turns like a turntable: around the vertical axis, and up or down, within these limits (radians).
+    /// It never rolls and never goes under the plate.
+    static let defaultAzimuth: CGFloat = 0.03
+    static let defaultElevation: CGFloat = 0.5
+    static let azimuthRange: ClosedRange<CGFloat> = (defaultAzimuth - degrees(50))...(defaultAzimuth + degrees(50))
+    static let elevationRange: ClosedRange<CGFloat> = degrees(18)...degrees(60)
+    var azimuth = defaultAzimuth
+    var elevation = defaultElevation
+    private static let fieldOfView: CGFloat = 30
+    /// Chosen by `fit(aspect:)` so every lamp stays in the frame at every allowed angle.
+    private var target = SCNVector3(0, 0.55, 0.05)
+    private var distance: CGFloat = 5.0
+    private var fittedAspect: CGFloat = 0
 
     static let background = NSColor(hex: 0x050506)
     static let warm = NSColor(hex: 0xFFC27A)
@@ -45,7 +51,7 @@ final class LampStage {
         let camera = SCNCamera()
         // three.js measures the field of view vertically; say so, or SceneKit may use the wider axis.
         camera.projectionDirection = .vertical
-        camera.fieldOfView = 30
+        camera.fieldOfView = Self.fieldOfView
         camera.zNear = 0.1
         camera.zFar = 50
         camera.wantsHDR = true
@@ -81,10 +87,91 @@ final class LampStage {
     }
 
     func placeCamera() {
-        let t = Self.target, d = Self.distance
-        cameraNode.position = SCNVector3(t.x + d * sin(azimuth) * cos(elevation), t.y + d * sin(elevation), t.z + d * cos(azimuth) * cos(elevation))
-        cameraNode.look(at: t)
+        cameraNode.position = Self.cameraPosition(target: target, distance: distance, azimuth: azimuth, elevation: elevation)
+        cameraNode.look(at: target, up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 0, -1))
     }
+
+    /// Back to the view the panel opens with.
+    func resetView(animated: Bool) {
+        azimuth = Self.defaultAzimuth
+        elevation = Self.defaultElevation
+        SCNTransaction.begin()
+        SCNTransaction.animationDuration = animated ? 0.35 : 0
+        SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        placeCamera()
+        SCNTransaction.commit()
+    }
+
+    /// Chooses the camera's aim and distance for a stage of this shape, so the plate and all five lamps
+    /// (the light bar and the task lamp are the tallest) stay fully in the frame at every allowed angle.
+    func fit(aspect: CGFloat) {
+        guard aspect > 0, abs(aspect - fittedAspect) > 0.001 else { return }
+        fittedAspect = aspect
+        let points = contentPoints()
+        var best: (target: SCNVector3, distance: CGFloat)?
+        for aimY in stride(from: CGFloat(0.3), through: 1.0, by: 0.05) {
+            let aim = SCNVector3(0, aimY, 0.05)
+            // The smallest distance that fits, by bisection: farther away always fits better.
+            var near: CGFloat = 2, far: CGFloat = 16
+            guard Self.fits(points, target: aim, distance: far, aspect: aspect) else { continue }
+            for _ in 0..<20 {
+                let mid = (near + far) / 2
+                if Self.fits(points, target: aim, distance: mid, aspect: aspect) { far = mid } else { near = mid }
+            }
+            if far < best?.distance ?? .infinity { best = (aim, far) }
+        }
+        guard let best else { return }
+        target = best.target
+        distance = best.distance
+        placeCamera()
+    }
+
+    /// Corners of every solid part (the plate and the lamps; not halos or light pools), in world space.
+    private func contentPoints() -> [SIMD3<Float>] {
+        var points: [SIMD3<Float>] = []
+        scene.rootNode.enumerateHierarchy { node, _ in
+            guard node.geometry != nil, node.categoryBitMask & 2 == 0 else { return }
+            let (lo, hi) = node.boundingBox
+            for x in [lo.x, hi.x] { for y in [lo.y, hi.y] { for z in [lo.z, hi.z] {
+                points.append(node.simdConvertPosition(SIMD3<Float>(Float(x), Float(y), Float(z)), to: nil))
+            } } }
+        }
+        return points
+    }
+
+    /// Whether every point projects inside the frame, with a small margin, at the default view and the edges of the drag range.
+    private static func fits(_ points: [SIMD3<Float>], target: SCNVector3, distance: CGFloat, aspect: CGFloat) -> Bool {
+        let tanV = Float(tan(degrees(fieldOfView) / 2)) * 0.94
+        let tanH = tanV * Float(aspect)
+        let t = SIMD3<Float>(Float(target.x), Float(target.y), Float(target.z))
+        let samples: [CGFloat] = [0, 0.25, 0.5, 0.75, 1]
+        var views = [(defaultAzimuth, defaultElevation)]
+        for a in samples {
+            for e in samples {
+                views.append((azimuthRange.lowerBound + a * (azimuthRange.upperBound - azimuthRange.lowerBound),
+                              elevationRange.lowerBound + e * (elevationRange.upperBound - elevationRange.lowerBound)))
+            }
+        }
+        for (az, el) in views {
+            let p = cameraPosition(target: target, distance: distance, azimuth: az, elevation: el)
+            let eye = SIMD3<Float>(Float(p.x), Float(p.y), Float(p.z))
+            let forward = simd_normalize(t - eye)
+            let right = simd_normalize(simd_cross(forward, SIMD3<Float>(0, 1, 0)))
+            let up = simd_cross(right, forward)
+            for point in points {
+                let v = point - eye
+                let depth = simd_dot(v, forward)
+                guard depth > 0.1, abs(simd_dot(v, right) / depth) <= tanH, abs(simd_dot(v, up) / depth) <= tanV else { return false }
+            }
+        }
+        return true
+    }
+
+    private static func cameraPosition(target t: SCNVector3, distance d: CGFloat, azimuth: CGFloat, elevation: CGFloat) -> SCNVector3 {
+        SCNVector3(t.x + d * sin(azimuth) * cos(elevation), t.y + d * sin(elevation), t.z + d * cos(azimuth) * cos(elevation))
+    }
+
+    static func degrees(_ value: CGFloat) -> CGFloat { value * .pi / 180 }
 
     /// Shows a lamp on or off. `level` is 0...1; the Govee bar uses its brightness.
     /// Switching on flares briefly past full brightness, so the change is easy to see.

@@ -57,11 +57,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return args[i + 1]
     }()
     static let showPanelWindow = CommandLine.arguments.contains("--window") || snapshotPath != nil
+    /// `--drag dx,dy` (points, y down) with `--snapshot`: drag on the 3D stage first, with real mouse events.
+    /// `--reset` then double-clicks empty space on the stage.
+    static let snapshotDrag: CGSize? = {
+        let args = CommandLine.arguments
+        guard let i = args.firstIndex(of: "--drag"), i + 1 < args.count else { return nil }
+        let parts = args[i + 1].split(separator: ",").compactMap { Double($0) }
+        return parts.count == 2 ? CGSize(width: parts[0], height: parts[1]) : nil
+    }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // A menu bar app: no Dock icon, unless the panel is shown as a window.
         NSApp.setActivationPolicy(Self.showPanelWindow ? .regular : .accessory)
         if let path = Self.snapshotPath {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                guard let stage = NSApp.windows.lazy.compactMap({ $0.contentView.flatMap(Self.stageView) }).first else { return }
+                if let drag = Self.snapshotDrag { Self.drag(stage, by: drag) }
+                if CommandLine.arguments.contains("--reset") { Self.doubleClickEmptySpace(stage) }
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 7) {
                 Self.snapshot(to: path)
                 NSApp.terminate(nil)
@@ -88,6 +101,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.draw(in: view.bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         NSGraphicsContext.restoreGraphicsState()
         try? out.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+    }
+
+    private static func stageView(in view: NSView) -> StageSCNView? {
+        (view as? StageSCNView) ?? view.subviews.lazy.compactMap(stageView).first
+    }
+
+    private static func mouse(_ type: NSEvent.EventType, _ view: NSView, at point: NSPoint, clicks: Int = 1) -> NSEvent {
+        NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                           windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: clicks, pressure: 1)!
+    }
+
+    private static func drag(_ view: StageSCNView, by delta: CGSize) {
+        let start = NSPoint(x: view.bounds.midX, y: view.bounds.midY)
+        view.mouseDown(with: mouse(.leftMouseDown, view, at: start))
+        for step in 1...20 {
+            let f = CGFloat(step) / 20
+            // SwiftUI-style y (down) to AppKit y (up).
+            let p = NSPoint(x: start.x + delta.width * f, y: start.y - delta.height * f)
+            view.mouseDragged(with: mouse(.leftMouseDragged, view, at: p))
+        }
+        view.mouseUp(with: mouse(.leftMouseUp, view, at: NSPoint(x: start.x + delta.width, y: start.y - delta.height)))
+    }
+
+    private static func doubleClickEmptySpace(_ view: StageSCNView) {
+        let corner = NSPoint(x: 8, y: 8)
+        for clicks in 1...2 {
+            view.mouseDown(with: mouse(.leftMouseDown, view, at: corner, clicks: clicks))
+            view.mouseUp(with: mouse(.leftMouseUp, view, at: corner, clicks: clicks))
+        }
     }
 
     private static func sceneViews(in view: NSView) -> [SCNView] {
