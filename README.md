@@ -84,7 +84,7 @@ If the light bar does not answer, the status line shows `Light bar not answering
 
 Lamp Bar controls Kasa plugs natively, in Swift, with the Kasa local protocol (JSON on port 9999, UDP for discovery and state, TCP for commands). It sends small requests only. Some plugs (for example the HS103 with firmware 1.0.3) do not answer the larger combined requests that other tools send.
 
-Kasa plugs with newer firmware accept local commands only after a login with the TP-Link account. Lamp Bar handles these plugs through a small helper that uses [python-kasa](https://github.com/python-kasa/python-kasa), because that protocol (KLAP) is not implemented natively. The plugs in this office use the older protocol and do not need the helper.
+Kasa plugs with newer firmware accept local commands only after a login with the TP-Link account. Lamp Bar handles these plugs through a small helper that uses [python-kasa](https://github.com/python-kasa/python-kasa), because that protocol (KLAP) is not implemented natively. The plugs in this office now use that newer firmware and need the helper.
 
 If a plug needs the login:
 

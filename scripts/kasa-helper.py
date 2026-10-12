@@ -9,13 +9,17 @@ Request:  {"command": "discover" | "set", "username": str, "password": str,
            "targets": [broadcast addresses]            (discover)
            "host": str, "child": str | null, "on": bool (set)}
 Reply:    {"outlets": [...]} or {"error": str}
+
+Discover omits a device that fails and still returns the others. The error
+text is the exception type only, so a message cannot echo the request or the login.
 """
 
 import asyncio
 import json
 import sys
 
-from kasa import Credentials, Discover
+from kasa import Credentials, DeviceType, Discover
+from kasa.device_factory import get_device_class_from_sys_info
 from kasa.deviceconfig import DeviceEncryptionType
 
 
@@ -39,6 +43,44 @@ def needs_login(dev):
     return dev.config.connection_type.encryption_type != DeviceEncryptionType.Xor
 
 
+def _note_failure(exc):
+    # Type only. Exception text can repeat the request, including the login.
+    print(type(exc).__name__, file=sys.stderr)
+
+
+async def _disconnect(dev):
+    try:
+        await dev.disconnect()
+    except Exception as exc:
+        _note_failure(exc)
+
+
+def _as_strip(dev):
+    """Build a strip when sysinfo lists children but the object is a single plug.
+
+    python-kasa 0.11 maps family IOT.SMARTPLUGSWITCH to IotPlug, so a KP303
+    has children and no relay_state. The factory reads the get_sysinfo
+    envelope, and dev.sys_info is only the inner dict. The new object keeps
+    the open protocol: the config-only constructor talks on legacy port 9999.
+    """
+    info = dev.sys_info
+    if not isinstance(info, dict) or not isinstance(info.get("children"), list):
+        return None
+    if dev.device_type == DeviceType.Strip:
+        return None
+    cls = get_device_class_from_sys_info({"system": {"get_sysinfo": info}})
+    return cls(dev.host, config=dev.config, protocol=dev.protocol)
+
+
+async def prepare(dev):
+    await dev.update()
+    rebuilt = _as_strip(dev)
+    if rebuilt is None:
+        return dev
+    await rebuilt.update()
+    return rebuilt
+
+
 async def discover(req, creds):
     found = {}
     for target in req.get("targets") or ["255.255.255.255"]:
@@ -46,20 +88,26 @@ async def discover(req, creds):
         found.update(devices)
     result = []
     for dev in found.values():
-        if not needs_login(dev):
+        try:
+            if not needs_login(dev):
+                continue
+        except Exception as exc:
+            _note_failure(exc)
             continue
         try:
-            await dev.update()
+            dev = await prepare(dev)
             result.extend(outlets(dev))
+        except Exception as exc:
+            _note_failure(exc)
         finally:
-            await dev.disconnect()
+            await _disconnect(dev)
     return result
 
 
 async def set_power(req, creds):
     dev = await Discover.discover_single(req["host"], credentials=creds)
     try:
-        await dev.update()
+        dev = await prepare(dev)
         target = dev
         if req.get("child"):
             target = next(c for c in dev.children if c.device_id == req["child"])
