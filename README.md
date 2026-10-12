@@ -1,3 +1,11 @@
+
+
+
+
+https://github.com/user-attachments/assets/eb96a0ba-7550-4c71-9b00-d8be866330ad
+
+
+
 # lamp-bar
 
 Lamp Bar is a Mac menu bar app that switches the five office lamps. It shows the lamps in 3D, standing where they are in the office, and lights each lamp that is on.
