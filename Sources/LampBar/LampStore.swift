@@ -32,7 +32,10 @@ final class LampStore: ObservableObject {
     @Published private(set) var hasLogin = Keychain.hasCredentials
     @Published private(set) var helperProblem: String?
     @Published var isPanelOpen = false {
-        didSet { if isPanelOpen && !oldValue { refreshSoon() } }
+        didSet {
+            guard isPanelOpen != oldValue else { return }
+            if isPanelOpen { startPolling() } else { pollTask?.cancel() }
+        }
     }
 
     private let kasa = KasaClient()
@@ -51,7 +54,8 @@ final class LampStore: ObservableObject {
         if let data = defaults.data(forKey: "goveeDevice") {
             goveeDevice = try? JSONDecoder().decode(GoveeDevice.self, from: data)
         }
-        startPolling()
+        // Read the lamps once for the menu bar icon. After that, Lamp Bar polls only while the panel is open.
+        refreshSoon()
     }
 
     // MARK: Reading state
@@ -76,13 +80,13 @@ final class LampStore: ObservableObject {
         lamps.values.filter { if case .unavailable = $0.availability { return true } else { return false } }.count
     }
 
+    /// Refreshes now, then every 10 seconds until the panel closes.
     private func startPolling() {
+        pollTask?.cancel()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()
-                // Poll lightly: often while the panel is open, rarely for the menu bar icon.
-                let seconds: UInt64 = (self?.isPanelOpen ?? false) ? 10 : 60
-                try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
             }
         }
     }

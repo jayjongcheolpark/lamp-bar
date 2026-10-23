@@ -170,19 +170,20 @@ struct LampButton: View {
 
 struct SyncStatus: View {
     @EnvironmentObject var store: LampStore
-    @State private var spin = false
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle()
-                .trim(from: 0, to: 0.75)
-                .stroke(store.isSyncing ? Color(hex: 0xB8B3AB) : statusColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                .frame(width: 12, height: 12)
-                .rotationEffect(.degrees(spin ? 360 : 0))
-                .animation(store.isSyncing ? .linear(duration: 0.8).repeatForever(autoreverses: false) : .default, value: spin)
+            // The angle comes from the clock, and the timeline stops when the sync ends. A repeatForever
+            // animation kept running after the panel closed and drew every frame in the hidden window.
+            TimelineView(.animation(paused: !store.isSyncing)) { context in
+                Circle()
+                    .trim(from: 0, to: 0.75)
+                    .stroke(store.isSyncing ? Color(hex: 0xB8B3AB) : statusColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .frame(width: 12, height: 12)
+                    .rotationEffect(.degrees(store.isSyncing ? context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.8) / 0.8 * 360 : 0))
+            }
             Text(text)
         }
-        .onChange(of: store.isSyncing) { _, syncing in spin = syncing }
         .help(store.goveeProblem.map { "\($0) Turn on LAN Control for the bar in the Govee Home app: open the bar, tap the gear icon, switch on LAN Control." } ?? "")
     }
 

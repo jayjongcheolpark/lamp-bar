@@ -50,7 +50,7 @@ For development, `swift run LampBar` starts the menu bar app from the source tre
 - **Lamp buttons:** one button for each lamp, with its drawing, its name and ON or OFF. Click a button to switch the lamp.
 - **Status line:** shows `Syncing…` while a command or a poll runs, `In sync` when every lamp answered, and the number of lamps that do not answer. The gear menu opens **Setup**, refreshes the state now, or quits the app.
 
-Lamp Bar reads the real state of every lamp when the panel opens and after each command. While the panel is open, it polls every 10 seconds. While the panel is closed, it polls every 60 seconds, to keep the menu bar icon correct. A lamp that does not answer shows `OFFLINE`.
+Lamp Bar reads the real state of every lamp when it starts, when the panel opens and after each command. While the panel is open, it polls every 10 seconds. While the panel is closed, it does not poll and uses almost no CPU. If a lamp is switched from somewhere else while the panel is closed, the menu bar icon shows the change the next time the panel opens. A lamp that does not answer shows `OFFLINE`.
 
 ## Map the plugs (one time)
 
