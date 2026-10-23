@@ -32,7 +32,10 @@ final class LampStore: ObservableObject {
     @Published private(set) var hasLogin = Keychain.hasCredentials
     @Published private(set) var helperProblem: String?
     @Published var isPanelOpen = false {
-        didSet { if isPanelOpen && !oldValue { refreshSoon() } }
+        didSet {
+            guard isPanelOpen != oldValue else { return }
+            if isPanelOpen { startPolling() } else { pollTask?.cancel() }
+        }
     }
 
     private let kasa = KasaClient()
@@ -44,6 +47,9 @@ final class LampStore: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     /// Commands bump this, so a poll that started before a command cannot overwrite its result.
     private var generation = 0
+    /// Polls can overlap (the panel closes and opens again during a poll), so the newest poll's result wins.
+    private var refreshCount = 0
+    private var appliedRefresh = 0
 
     init() {
         let stored = Self.settings.dictionary(forKey: "plugMapping") as? [String: String] ?? [:]
@@ -51,7 +57,8 @@ final class LampStore: ObservableObject {
         if let data = defaults.data(forKey: "goveeDevice") {
             goveeDevice = try? JSONDecoder().decode(GoveeDevice.self, from: data)
         }
-        startPolling()
+        // Read the lamps once for the menu bar icon. After that, Lamp Bar polls only while the panel is open.
+        refreshSoon()
     }
 
     // MARK: Reading state
@@ -76,13 +83,13 @@ final class LampStore: ObservableObject {
         lamps.values.filter { if case .unavailable = $0.availability { return true } else { return false } }.count
     }
 
+    /// Refreshes now, then every 10 seconds until the panel closes.
     private func startPolling() {
+        pollTask?.cancel()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()
-                // Poll lightly: often while the panel is open, rarely for the menu bar icon.
-                let seconds: UInt64 = (self?.isPanelOpen ?? false) ? 10 : 60
-                try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
             }
         }
     }
@@ -100,11 +107,14 @@ final class LampStore: ObservableObject {
         busy += 1
         defer { busy -= 1 }
         let startGeneration = generation
+        refreshCount += 1
+        let id = refreshCount
         async let kasaResult = discoverKasa()
         async let goveeResult = readGovee()
         let (found, (device, status)) = await (kasaResult, goveeResult)
         // A command started after this poll began; its own refresh brings the newer state.
-        guard startGeneration == generation else { return }
+        guard startGeneration == generation, id > appliedRefresh else { return }
+        appliedRefresh = id
         apply(outlets: found)
         apply(goveeDevice: device, status: status)
         lastSync = Date()
