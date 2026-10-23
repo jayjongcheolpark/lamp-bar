@@ -47,6 +47,9 @@ final class LampStore: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     /// Commands bump this, so a poll that started before a command cannot overwrite its result.
     private var generation = 0
+    /// Polls can overlap (the panel closes and opens again during a poll), so the newest poll's result wins.
+    private var refreshCount = 0
+    private var appliedRefresh = 0
 
     init() {
         let stored = Self.settings.dictionary(forKey: "plugMapping") as? [String: String] ?? [:]
@@ -104,11 +107,14 @@ final class LampStore: ObservableObject {
         busy += 1
         defer { busy -= 1 }
         let startGeneration = generation
+        refreshCount += 1
+        let id = refreshCount
         async let kasaResult = discoverKasa()
         async let goveeResult = readGovee()
         let (found, (device, status)) = await (kasaResult, goveeResult)
         // A command started after this poll began; its own refresh brings the newer state.
-        guard startGeneration == generation else { return }
+        guard startGeneration == generation, id > appliedRefresh else { return }
+        appliedRefresh = id
         apply(outlets: found)
         apply(goveeDevice: device, status: status)
         lastSync = Date()
